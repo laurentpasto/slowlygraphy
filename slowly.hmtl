@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ellipse Trail with Gradient Fill and Color-Modulated Sound</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100%; /* Ensure body takes full height */
+        }
+        canvas {
+            display: block;
+            background: radial-gradient(circle, #E6E6D1, #F4F4F2); /* Radial gradient background */
+        }
+        .fullscreen-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background-color: rgba(255, 255, 255, 0.7);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .fullscreen-toggle:hover {
+            background-color: rgba(255, 255, 255, 0.9);
+            transform: scale(1.1);
+        }
+        .fullscreen-icon {
+            width: 20px;
+            height: 20px;
+            position: relative;
+        }
+        /* Fullscreen enter icon */
+        .fs-enter-icon {
+            display: block;
+        }
+        .fs-enter-icon::before,
+        .fs-enter-icon::after {
+            content: '';
+            position: absolute;
+            background-color: #333;
+        }
+        .fs-enter-icon::before {
+            width: 20px;
+            height: 2px;
+            top: 9px;
+            left: 0;
+        }
+        .fs-enter-icon::after {
+            width: 2px;
+            height: 20px;
+            left: 9px;
+            top: 0;
+        }
+        /* Fullscreen exit icon */
+        .fs-exit-icon {
+            display: none;
+        }
+        .fs-exit-icon::before,
+        .fs-exit-icon::after {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 2px;
+            background-color: #333;
+            top: 9px;
+            left: 2px;
+            transform-origin: center;
+        }
+        .fs-exit-icon::before {
+            transform: rotate(45deg);
+        }
+        .fs-exit-icon::after {
+            transform: rotate(-45deg);
+        }
+        /* For fullscreen state */
+        body.is-fullscreen .fs-enter-icon {
+            display: none;
+        }
+        body.is-fullscreen .fs-exit-icon {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="fullscreen-toggle" id="fullscreenToggle">
+        <div class="fullscreen-icon">
+            <span class="fs-enter-icon"></span>
+            <span class="fs-exit-icon"></span>
+        </div>
+    </div>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Function to resize the canvas to full window size
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        // Set initial canvas size
+        resizeCanvas();
+
+        // Ellipse properties
+        const ellipseWidth = 20;
+        const ellipseHeight = 20;
+
+        // Trail properties
+        const trailPoints = [];
+        const maxTrailLength = 1200;
+
+        // Color sequence
+        const colors = [
+            { r: 217, g: 137, b: 174 }, // #D989AE
+            { r: 150, g: 198, b: 217 }, // #96C6D9
+            { r: 242, g: 205, b: 136 }, // #F2CD88
+            { r: 242, g: 139, b: 48 },  // #F28B30
+            { r: 217, g: 71, b: 17 }    // #D94711
+        ];
+
+        // Current position of the ellipse
+        let currentX = canvas.width / 2;
+        let currentY = canvas.height / 2;
+
+        // Target position for the ellipse
+        let targetX = currentX;
+        let targetY = currentY;
+
+        // Function to interpolate color
+        function interpolateColor(start, end, factor) {
+            const r = Math.round(start.r + (end.r - start.r) * factor);
+            const g = Math.round(start.g + (end.g - start.g) * factor);
+            const b = Math.round(start.b + (end.b - start.b) * factor);
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+
+        // Function to get color based on index with cyclic interpolation
+        function getColor(index) {
+            const segmentLength = maxTrailLength / colors.length;
+            const cycleIndex = index % maxTrailLength;
+            const segmentIndex = Math.floor(cycleIndex / segmentLength);
+            const segmentFactor = (cycleIndex % segmentLength) / segmentLength;
+
+            const startColor = colors[segmentIndex];
+            const endColor = colors[(segmentIndex + 1) % colors.length];
+
+            return interpolateColor(startColor, endColor, segmentFactor);
+        }
+
+        // Function to get color object from RGB string
+        function getRGBFromString(colorString) {
+            const rgbMatch = colorString.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+            if (!rgbMatch) return { r: 0, g: 0, b: 0 };
+            
+            return {
+                r: parseInt(rgbMatch[1]),
+                g: parseInt(rgbMatch[2]),
+                b: parseInt(rgbMatch[3])
+            };
+        }
+
+        // Function to determine if a color should use minor chord
+        function shouldUseMinorChord(color) {
+            const rgb = typeof color === 'string' ? getRGBFromString(color) : color;
+            
+            // Convert RGB to hex for comparison
+            const hexColor = rgbToHex(rgb.r, rgb.g, rgb.b);
+            
+            // List of colors that should use minor chord (approximate matches)
+            const minorChordColors = [
+                '#D989AE', // Pink
+                '#F2CD88', // Light yellow
+                '#D94711'  // Orange-red
+            ];
+            
+            // Check if current color is close to any of the specified colors
+            return minorChordColors.some(targetColor => isColorSimilar(hexColor, targetColor));
+        }
+        
+        // Helper function to convert RGB to hex
+        function rgbToHex(r, g, b) {
+            return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+        }
+        
+        // Helper function to check if two colors are similar
+        function isColorSimilar(color1, color2) {
+            // Simple color similarity check
+            // Convert both colors to RGB
+            const rgb1 = hexToRgb(color1);
+            const rgb2 = hexToRgb(color2);
+            
+            // Calculate color distance (Euclidean distance in RGB space)
+            const distance = Math.sqrt(
+                Math.pow(rgb1.r - rgb2.r, 2) +
+                Math.pow(rgb1.g - rgb2.g, 2) +
+                Math.pow(rgb1.b - rgb2.b, 2)
+            );
+            
+            // Colors are similar if distance is less than threshold
+            return distance < 50; // Adjust threshold as needed
+        }
+        
+        // Helper function to convert hex to RGB
+        function hexToRgb(hex) {
+            // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
+            const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+            hex = hex.replace(shorthandRegex, (m, r, g, b) => r + r + g + g + b + b);
+            
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : { r: 0, g: 0, b: 0 };
+        }
+
+        // Function to draw the trail with a stroke
+        function drawTrail() {
+            ctx.beginPath();
+            for (let i = 0; i < trailPoints.length; i++) {
+                const point = trailPoints[i];
+                const color = getColor(i);
+                drawFilledEllipse(point.x, point.y, color);
+            }
+        }
+
+        // Function to draw a filled ellipse
+        function drawFilledEllipse(x, y, color) {
+            ctx.beginPath();
+            ctx.ellipse(x, y, ellipseWidth, ellipseHeight, 0, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
+
+        // Animation loop with throttling
+        let lastFrameTime = 0;
+        const frameInterval = 1000 / 30; // Target 30 FPS
+        let drawTrailEnabled = false; // Initialize to false to start drawing immediately
+
+        // Create an audio context
+        let audioContext = null;
+        let rootOscillator = null;
+        let thirdOscillator = null;
+        let fifthOscillator = null;
+        let gainNode = null;
+
+        // Add mute state variable 
+        let isMuted = false;
+
+        // Add frequency constants
+        const rootFrequency = 261.63; // C4
+        const majorThirdFrequency = rootFrequency * Math.pow(2, 4 / 12); // E4 (major third)
+        const minorThirdFrequency = rootFrequency * Math.pow(2, 3 / 12); // Eb4 (minor third)
+        const fifthFrequency = rootFrequency * Math.pow(2, 7 / 12); // G4
+
+        // Function to initialize audio
+        function initAudio() {
+            if (audioContext) return; // Already initialized
+
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            // Create oscillators for the chord
+            rootOscillator = audioContext.createOscillator();
+            thirdOscillator = audioContext.createOscillator();
+            fifthOscillator = audioContext.createOscillator();
+
+            // Set oscillator waveform to sine for a smooth sound
+            rootOscillator.type = 'sine';
+            thirdOscillator.type = 'sine';
+            fifthOscillator.type = 'sine';
+
+            // Initially set to major chord
+            rootOscillator.frequency.setValueAtTime(rootFrequency, audioContext.currentTime);
+            thirdOscillator.frequency.setValueAtTime(majorThirdFrequency, audioContext.currentTime);
+            fifthOscillator.frequency.setValueAtTime(fifthFrequency, audioContext.currentTime);
+
+            // Create a gain node to control the volume
+            gainNode = audioContext.createGain();
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime); // Sharp attack
+
+            // Connect oscillators to the gain node and then to the destination
+            rootOscillator.connect(gainNode).connect(audioContext.destination);
+            thirdOscillator.connect(gainNode).connect(audioContext.destination);
+            fifthOscillator.connect(gainNode).connect(audioContext.destination);
+
+            // Start the oscillators
+            rootOscillator.start();
+            thirdOscillator.start();
+            fifthOscillator.start();
+        }
+
+        // Function to update chord based on current color
+        function updateChordBasedOnColor() {
+            if (!thirdOscillator || !audioContext) return;
+            
+            // Get the last color in the trail (or current color if trail is empty)
+            const colorIndex = Math.max(0, trailPoints.length - 1);
+            const currentColor = getColor(colorIndex);
+            
+            const rgb = getRGBFromString(currentColor);
+            const currentTime = audioContext.currentTime;
+            
+            if (shouldUseMinorChord(rgb)) {
+                // Change to minor chord (minor third)
+                thirdOscillator.frequency.setTargetAtTime(minorThirdFrequency, currentTime, 0.1);
+            } else {
+                // Change to major chord (major third)
+                thirdOscillator.frequency.setTargetAtTime(majorThirdFrequency, currentTime, 0.1);
+            }
+        }
+
+        // Function to play sound with color-based modulation
+        function playSound() {
+            if (!gainNode) return;
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime); // Sharp attack
+            updateChordBasedOnColor(); // Set initial chord based on color
+        }
+
+        // Function to fade out the sound
+        function fadeOut() {
+            if (!audioContext) return;
+            const currentTime = audioContext.currentTime;
+            gainNode.gain.cancelScheduledValues(currentTime);
+            gainNode.gain.setValueAtTime(gainNode.gain.value, currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, currentTime + 0.5);
+        }
+
+        // Function to fade in the sound
+        function fadeIn() {
+            if (!audioContext) return;
+            const currentTime = audioContext.currentTime;
+            gainNode.gain.cancelScheduledValues(currentTime);
+            gainNode.gain.setValueAtTime(0.001, currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.1, currentTime + 0.5);
+        }
+
+        // Function to toggle mute
+        function toggleMute() {
+            if (!audioContext) return;
+
+            isMuted = !isMuted;
+            const currentTime = audioContext.currentTime;
+
+            if (isMuted) {
+                gainNode.gain.setValueAtTime(0, currentTime);
+            } else {
+                gainNode.gain.setValueAtTime(0.1, currentTime);
+            }
+        }
+
+        function animate(timestamp) {
+            if (timestamp - lastFrameTime < frameInterval) {
+                requestAnimationFrame(animate);
+                return;
+            }
+            lastFrameTime = timestamp;
+
+            // Interpolate the position of the ellipse
+            const speedFactor = 0.08; // Lower factor to limit speed
+            currentX += (targetX - currentX) * speedFactor;
+            currentY += (targetY - currentY) * speedFactor;
+
+            // Clear the canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw the trail and ellipse
+            drawTrail(); // Always draw the trail
+            drawFilledEllipse(currentX, currentY, 'blue');
+
+            // Add current position to trail only if drawing is enabled
+            if (drawTrailEnabled) {
+                trailPoints.push({ x: currentX, y: currentY });
+                if (trailPoints.length > maxTrailLength) {
+                    trailPoints.shift();
+                }
+                
+                // Update the chord based on current color when drawing
+                updateChordBasedOnColor();
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // Function to convert canvas to PNG and download
+        function saveAsPNG() {
+            const dataURL = canvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.href = dataURL;
+            link.download = 'canvas-drawing.png';
+            link.click();
+        }
+
+        // Function to clear the canvas
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            trailPoints.length = 0; // Clear the trail points
+        }
+
+        // Event listeners
+        
+        // Event listener for mouse movement
+        canvas.addEventListener('mousemove', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            targetX = event.clientX - rect.left;
+            targetY = event.clientY - rect.top;
+        });
+
+        // Event listener for mouse down to start adding new points and trigger sound
+        canvas.addEventListener('mousedown', (event) => {
+            if (event.button === 0) { // Left mouse button
+                drawTrailEnabled = true;
+                initAudio(); // Initialize audio on mouse press
+                playSound(); // Trigger sound with sharp attack
+            }
+        });
+
+        // Event listener for mouse up to stop adding new points
+        canvas.addEventListener('mouseup', (event) => {
+            if (event.button === 0) { // Left mouse button
+                drawTrailEnabled = false;
+                fadeOut(); // Fade out sound
+            }
+        });
+
+        // Event listener for keydown to save as PNG or clear canvas
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 's' || event.key === 'S') {
+                saveAsPNG();
+            }
+            if (event.key === 'c' || event.key === 'C') {
+                clearCanvas();
+            }
+            if (event.key === 'm' || event.key === 'M') {
+                toggleMute();
+            }
+        });
+
+        // Event listener for window resize to adjust canvas size
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Fullscreen functionality
+        const fullscreenToggle = document.getElementById('fullscreenToggle');
+        
+        // Function to toggle fullscreen mode
+        function toggleFullscreen() {
+            if (!document.fullscreenElement && 
+                !document.mozFullScreenElement && 
+                !document.webkitFullscreenElement && 
+                !document.msFullscreenElement) {
+                // Enter fullscreen
+                if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen();
+                } else if (document.documentElement.msRequestFullscreen) {
+                    document.documentElement.msRequestFullscreen();
+                } else if (document.documentElement.mozRequestFullScreen) {
+                    document.documentElement.mozRequestFullScreen();
+                } else if (document.documentElement.webkitRequestFullscreen) {
+                    document.documentElement.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
+                }
+                document.body.classList.add('is-fullscreen');
+            } else {
+                // Exit fullscreen
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                } else if (document.msExitFullscreen) {
+                    document.msExitFullscreen();
+                } else if (document.mozCancelFullScreen) {
+                    document.mozCancelFullScreen();
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
+                }
+                document.body.classList.remove('is-fullscreen');
+            }
+            
+            // After toggling fullscreen, make sure canvas is properly sized
+            setTimeout(resizeCanvas, 100);
+        }
+        
+        fullscreenToggle.addEventListener('click', toggleFullscreen);
+        
+        // Listen for fullscreen change events to update UI accordingly
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+        
+        function handleFullscreenChange() {
+            if (document.fullscreenElement || 
+                document.webkitFullscreenElement || 
+                document.mozFullScreenElement || 
+                document.msFullscreenElement) {
+                document.body.classList.add('is-fullscreen');
+            } else {
+                document.body.classList.remove('is-fullscreen');
+            }
+        }
+        
+        // Start the animation loop
+        requestAnimationFrame(animate);
+    </script>
+</body>
+</html>
